@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Header } from "./components/Header";
 import { Sidebar } from "./components/Sidebar";
+import { UpdateChecker } from "./components/UpdateChecker";
 import { SettingsModal } from "./components/SettingsModal";
 import { CfCvSetupModal } from "./components/CfCvSetupModal";
 import { exportTransactionsExcel } from "./utils/excelExporter";
@@ -559,6 +560,8 @@ function App() {
           </button>
         </div>
       )}
+
+      <UpdateChecker />
 
       {/* Toast: resultado do upload (livro-caixa contínuo) */}
       {appendToast && (
