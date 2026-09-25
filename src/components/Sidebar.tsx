@@ -1,4 +1,4 @@
-import { ArrowDownLeft, ArrowUpRight, BarChart2, Briefcase, ChevronDown, History, Upload, User, Wallet } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, BarChart2, Briefcase, ChevronDown, FileBarChart, History, Upload, User, Wallet } from "lucide-react";
 import logo from "../assets/logo.png";
 import { AppTab, BankId } from "../types/finance";
 import { BANKS } from "../data/constants";
@@ -22,6 +22,7 @@ const TABS: { id: AppTab; label: string; icon: React.ReactNode }[] = [
   { id: "resumo",       label: "Análise",      icon: <BarChart2 size={16} /> },
   { id: "historico",    label: "Histórico",    icon: <History size={16} /> },
   { id: "financeiro",   label: "Financeiro",   icon: <Briefcase size={16} /> },
+  { id: "relatorios",   label: "Relatórios",   icon: <FileBarChart size={16} /> },
 ];
 
 export function Sidebar({ activeTab, selectedBank, activeUser, onChangeTab, onChangeBank, onOpenSettings }: Props) {

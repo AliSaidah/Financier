@@ -328,26 +328,28 @@ function VaVrTab() {
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
     const margin = 15;
     const pageW = 210;
+    const pageH = 297;
+    const bottomLimit = pageH - 22; // reserva espaço pro rodapé
     const contentW = pageW - 2 * margin;
     const [ano, mesNum] = mes.split("-");
     const mesLabel = `${MESES_PT[parseInt(mesNum) - 1]}/${ano}`;
     const hoje = new Date().toLocaleDateString("pt-BR");
     const brl = (n: number) => `R$ ${n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-    // ── Header ──
-    doc.setFillColor(30, 41, 59);
-    doc.rect(0, 0, pageW, 18, "F");
-    doc.setFontSize(13);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(255, 255, 255);
-    doc.text("RELATÓRIO VA / VR", margin, 12);
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "normal");
-    doc.text(`Período: ${mesLabel}   ·   Gerado em: ${hoje}`, pageW - margin, 12, { align: "right" });
+    // ── Header (repetido em toda página nova) ──
+    function drawPageHeader() {
+      doc.setFillColor(30, 41, 59);
+      doc.rect(0, 0, pageW, 18, "F");
+      doc.setFontSize(13);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(255, 255, 255);
+      doc.text("RELATÓRIO VA / VR", margin, 12);
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Período: ${mesLabel}   ·   Gerado em: ${hoje}`, pageW - margin, 12, { align: "right" });
+    }
 
-    // ── Table header ──
     const rowH = 9;
-    let y = 28;
     const cols = [
       { label: "Funcionário",   x: margin,      w: 58, align: "left"   },
       { label: "Cargo",         x: margin + 58, w: 34, align: "left"   },
@@ -357,25 +359,45 @@ function VaVrTab() {
       { label: "Total VA",      x: margin + 150,w: 30, align: "right"  },
     ] as const;
 
-    doc.setFillColor(248, 250, 252);
-    doc.rect(margin, y - 6, contentW, rowH + 1, "F");
-    doc.setDrawColor(226, 232, 240);
-    doc.setLineWidth(0.3);
-    doc.line(margin, y - 6, pageW - margin, y - 6);
-    doc.setFontSize(7.5);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(71, 85, 105);
-    for (const col of cols) {
-      const tx = col.align === "right" ? col.x + col.w : col.align === "center" ? col.x + col.w / 2 : col.x;
-      doc.text(col.label, tx, y - 1, { align: col.align, lineHeightFactor: 1.2 });
+    function drawTableHeader(yStart: number): number {
+      doc.setFillColor(248, 250, 252);
+      doc.rect(margin, yStart - 6, contentW, rowH + 1, "F");
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.3);
+      doc.line(margin, yStart - 6, pageW - margin, yStart - 6);
+      doc.setFontSize(7.5);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(71, 85, 105);
+      for (const col of cols) {
+        const tx = col.align === "right" ? col.x + col.w : col.align === "center" ? col.x + col.w / 2 : col.x;
+        doc.text(col.label, tx, yStart - 1, { align: col.align, lineHeightFactor: 1.2 });
+      }
+      return yStart + rowH;
     }
-    y += rowH;
+
+    // Garante espaço para a próxima linha; se não couber, abre página nova.
+    // `withTableHeader` reimprime o cabeçalho da tabela (usado nas linhas de dados).
+    function ensureSpace(y: number, needed: number, withTableHeader = false): number {
+      if (y + needed <= bottomLimit) return y;
+      doc.addPage();
+      drawPageHeader();
+      let ny = 28;
+      if (withTableHeader) ny = drawTableHeader(ny);
+      return ny;
+    }
+
+    drawPageHeader();
+    let y = drawTableHeader(28);
 
     // ── Data rows ──
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
     let alt = false;
     for (const f of cltFuncionarios) {
+      const beforeY = y;
+      y = ensureSpace(y, rowH, true);
+      if (y !== beforeY) { alt = false; doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); }
+
       const lanc = getLanc(f.id);
       const almocou = lanc?.vezesAlmocou ?? 0;
       const dias = parseInt(diasUteis) || 0;
@@ -399,6 +421,7 @@ function VaVrTab() {
     }
 
     // ── Total row ──
+    y = ensureSpace(y, rowH, false);
     doc.setDrawColor(148, 163, 184);
     doc.line(margin, y - 4, pageW - margin, y - 4);
     doc.setFillColor(241, 245, 249);
@@ -412,6 +435,7 @@ function VaVrTab() {
     y += rowH + 4;
 
     // ── Detalhamento por funcionário ──
+    y = ensureSpace(y, 11, false);
     doc.setDrawColor(226, 232, 240);
     doc.line(margin, y, pageW - margin, y);
     y += 5;
@@ -427,25 +451,28 @@ function VaVrTab() {
       const almocou = lanc?.vezesAlmocou ?? 0;
       const dias = parseInt(diasUteis) || 0;
       if (dias === 0) continue;
+      y = ensureSpace(y, 6, false);
       const va = calcVA(dias, almocou);
       const baseValor = dias * valorDiaria;
       const descValor = almocou * valorAlmoco;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
       doc.setTextColor(30, 41, 59);
       doc.text(f.nome, margin, y);
       doc.setTextColor(71, 85, 105);
       const detalhe = `${dias} × ${brl(valorDiaria)} = ${brl(baseValor)} ${almocou > 0 ? `– ${almocou} × ${brl(valorAlmoco)} = ${brl(descValor)}` : ""} → ${brl(va)}`;
       doc.text(detalhe, pageW - margin, y, { align: "right" });
       y += 6;
-      if (y > 270) { doc.addPage(); y = 20; }
     }
 
-    // ── Footer ──
+    // ── Footer (só na última página) ──
+    doc.setPage(doc.getNumberOfPages());
     doc.setFont("helvetica", "italic");
     doc.setFontSize(7);
     doc.setTextColor(148, 163, 184);
     doc.text(
       `Fórmula: (Dias Úteis × ${brl(valorDiaria)}) − (Almoços × ${brl(valorAlmoco)})`,
-      margin, 287
+      margin, pageH - 10
     );
 
     doc.save(`relatorio-va-vr-${mes}.pdf`);

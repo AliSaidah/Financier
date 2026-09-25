@@ -5,7 +5,7 @@ export type BankId =
   | "inter"
   | "nubank";
 
-export type AppTab = "upload" | "recebimentos" | "pagamentos" | "contas" | "resumo" | "painel" | "historico" | "financeiro";
+export type AppTab = "upload" | "recebimentos" | "pagamentos" | "contas" | "resumo" | "painel" | "historico" | "financeiro" | "relatorios";
 
 // ─── Gestão Franquias ─────────────────────────────────────────────────────────
 

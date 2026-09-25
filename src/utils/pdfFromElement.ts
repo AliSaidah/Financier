@@ -13,6 +13,16 @@ export async function generatePdfFromElement(el: HTMLElement, fileName: string):
   el.style.opacity  = "1";
   el.style.zIndex   = "9999";
 
+  // Espera as fontes (Inter vem do Google Fonts, assíncrono) terminarem de
+  // carregar — capturar antes disso faz o html2canvas desenhar com a fonte
+  // de fallback ainda trocando, o que sai com letras deformadas/"tortas".
+  try {
+    await Promise.race([
+      document.fonts.ready,
+      new Promise((r) => setTimeout(r, 1500)),
+    ]);
+  } catch { /* document.fonts pode não existir em ambientes muito antigos */ }
+
   // Dois frames para o browser pintar com os estilos corretos
   await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
 

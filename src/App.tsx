@@ -16,6 +16,7 @@ import { PainelPage } from "./pages/Painel";
 import { HistoricoPage } from "./pages/Historico";
 import { ContasPage } from "./pages/Contas";
 import { FinanceiroPage } from "./pages/Financeiro";
+import { CentralRelatoriosPage } from "./pages/CentralRelatorios";
 import { UploadPage } from "./pages/Upload";
 import { HistoryEntry, Transaction } from "./types/finance";
 import { BANKS } from "./data/constants";
@@ -288,6 +289,7 @@ function App() {
   const currentTitle: Record<string, string> = {
     upload: "Upload", recebimentos: "Recebimentos", pagamentos: "Pagamentos",
     contas: "Contas", resumo: "Análise", painel: "Painel Gerencial", historico: "Histórico", financeiro: "Financeiro",
+    relatorios: "Central de Relatórios",
   };
 
   return (
@@ -310,9 +312,9 @@ function App() {
           <div className="flex shrink-0 items-center justify-between border-b border-white/[0.06] bg-white/[0.015] px-6 py-4 backdrop-blur-sm">
             <Header
               title={currentTitle[activeTab] ?? ""}
-              onClearAll={activeTab !== "historico" && activeTab !== "contas" && activeTab !== "painel" ? clearData : undefined}
+              onClearAll={activeTab !== "historico" && activeTab !== "contas" && activeTab !== "painel" && activeTab !== "financeiro" && activeTab !== "relatorios" ? clearData : undefined}
               onClearCategories={
-                activeTab !== "historico" && activeTab !== "contas" && activeTab !== "painel" && activeTabTransactionIds.length > 0
+                activeTab !== "historico" && activeTab !== "contas" && activeTab !== "painel" && activeTab !== "financeiro" && activeTab !== "relatorios" && activeTabTransactionIds.length > 0
                   ? () => clearCategoriesForIds(activeTabTransactionIds)
                   : undefined
               }
@@ -415,10 +417,15 @@ function App() {
                 <FinanceiroPage />
               </motion.div>
             )}
+            {activeTab === "relatorios" && (
+              <motion.div key="relatorios" {...PAGE_TRANSITION}>
+                <CentralRelatoriosPage onNavigate={setActiveTab} />
+              </motion.div>
+            )}
           </AnimatePresence>
 
           {/* Footer actions */}
-          {activeTab !== "upload" && activeTab !== "historico" && activeTab !== "contas" && activeTab !== "painel" && activeTab !== "financeiro" && (
+          {activeTab !== "upload" && activeTab !== "historico" && activeTab !== "contas" && activeTab !== "painel" && activeTab !== "financeiro" && activeTab !== "relatorios" && (
             <div className="mt-5 flex items-center gap-3">
               <div className="relative ml-auto">
                 <button
