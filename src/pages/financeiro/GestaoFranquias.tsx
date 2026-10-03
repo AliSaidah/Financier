@@ -122,7 +122,7 @@ interface RelatorioRow {
   cnpj: string;
   razaoSocial: string;
   franquia?: Franquia;
-  via?: "cnpj" | "razao" | "manual";
+  via?: "cnpj" | "razao" | "cidade" | "manual";
   baseCalculo: number;
   valorTroca: number;
   valorApurado: number;
@@ -130,8 +130,8 @@ interface RelatorioRow {
   marketing: number;
 }
 
-// CNPJ primeiro; se não houver/não bater, tenta pela razão social cadastrada
-function findFranquia(franquias: Franquia[], cnpj: string, razao: string): { franquia?: Franquia; via?: "cnpj" | "razao" } {
+// CNPJ → razão social cadastrada → cidade contida no nome (último recurso, revisar)
+function findFranquia(franquias: Franquia[], cnpj: string, razao: string): { franquia?: Franquia; via?: "cnpj" | "razao" | "cidade" } {
   if (cnpj.length >= 14) {
     const f = franquias.find((x) => x.cnpj === cnpj);
     if (f) return { franquia: f, via: "cnpj" };
@@ -146,17 +146,29 @@ function findFranquia(franquias: Franquia[], cnpj: string, razao: string): { fra
     return fn.includes(n) || n.includes(fn);
   });
   if (parciais.length === 1) return { franquia: parciais[0], via: "razao" };
+  // Ex.: "SANTO SANTO SANTO ARARAQUARA - SP" → franquia de Araraquara
+  const palavras = ` ${n} `;
+  const porCidade = franquias.filter((x) => {
+    const c = normalizeNome(x.cidade);
+    return c.length >= 4 && palavras.includes(` ${c} `);
+  });
+  if (porCidade.length === 1) return { franquia: porCidade[0], via: "cidade" };
   return {};
 }
+
+const CHAVES_BASE = ["base", "apura", "venda", "bruta", "faturamento", "receita"];
+const CHAVES_TROCA = ["troca", "desconto", "devoluc"];
 
 function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
   const { franquias, addLancamentoFranquia, updateFranquia } = useFinanceiroStore();
   const [mes, setMes] = useState(currentMes());
   const [rows, setRows] = useState<RelatorioRow[]>([]);
   const [step, setStep] = useState<"upload" | "confirm">("upload");
+  const [erro, setErro] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   function processFile(file: File) {
+    setErro(null);
     const reader = new FileReader();
     reader.onload = (e) => {
       const data = new Uint8Array(e.target!.result as ArrayBuffer);
@@ -168,8 +180,12 @@ function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
       const colKeys = Object.keys(json[0]);
       const headers = colKeys.map((h) => semAcento(h).trim());
       const cnpjIdx = headers.findIndex((h) => h.includes("cnpj"));
-      const baseIdx = headers.findIndex((h) => h.includes("base") || h.includes("apura"));
-      const trocaIdx = headers.findIndex((h) => h.includes("troca") || h.includes("desconto") || h.includes("devoluc"));
+      const trocaIdx = headers.findIndex((h) => CHAVES_TROCA.some((k) => h.includes(k)));
+      const baseIdx = headers.findIndex((h, i) => i !== trocaIdx && CHAVES_BASE.some((k) => h.includes(k)));
+      if (baseIdx < 0) {
+        setErro(`Não encontrei a coluna de vendas na planilha. Colunas encontradas: ${colKeys.map((k) => `"${k}"`).join(", ")}. O título da coluna de vendas precisa conter "Venda", "Base" ou "Faturamento".`);
+        return;
+      }
       let razaoIdx = headers.findIndex((h) => h.includes("razao") || h.includes("social"));
       if (razaoIdx < 0) razaoIdx = headers.findIndex((h) => ["nome", "empresa", "franquia", "cliente", "loja"].some((k) => h.includes(k)));
 
@@ -232,8 +248,14 @@ function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
                 className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-white/[0.10] py-8 text-sm text-slate-500 transition hover:border-accentPositive/30 hover:text-accentPositive">
                 <Upload size={16} /> Selecionar arquivo Excel (.xlsx)
               </button>
+              {erro && (
+                <div className="flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0 text-red-400" />
+                  <p className="text-sm text-red-300">{erro}</p>
+                </div>
+              )}
               <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden"
-                onChange={(e) => { if (e.target.files?.[0]) processFile(e.target.files[0]); }} />
+                onChange={(e) => { if (e.target.files?.[0]) processFile(e.target.files[0]); e.target.value = ""; }} />
             </div>
           ) : (
             <div className="space-y-3">
@@ -269,8 +291,10 @@ function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
                           ))}
                         </select>
                         {row.via && (
-                          <span className="shrink-0 rounded bg-white/[0.05] px-1.5 py-0.5 text-[9px] font-semibold uppercase text-slate-500">
-                            {row.via === "cnpj" ? "CNPJ" : row.via === "razao" ? "Razão" : "Manual"}
+                          <span
+                            title={row.via === "cidade" ? "Reconhecida pela cidade no nome — confira se está certa" : undefined}
+                            className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase ${row.via === "cidade" ? "bg-amber-500/10 text-amber-400" : "bg-white/[0.05] text-slate-500"}`}>
+                            {row.via === "cnpj" ? "CNPJ" : row.via === "razao" ? "Razão" : row.via === "cidade" ? "Cidade ?" : "Manual"}
                           </span>
                         )}
                       </div>
