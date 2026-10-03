@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { AlertTriangle, Check, Copy, FileText, Plus, Trash2, Upload, X } from "lucide-react";
+import { AlertTriangle, Check, Copy, FileText, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useFinanceiroStore } from "../../store/useFinanceiroStore";
 import { Franquia, LancamentoFranquia } from "../../types/finance";
@@ -26,15 +26,49 @@ function calcVencimento(mesReferencia: string, dia: number): string {
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
-// ─── Add Franquia Modal ───────────────────────────────────────────────────────
+// Valores do Excel podem vir como número ou como texto "R$ 1.234,56"
+function parseValor(v: unknown): number {
+  if (typeof v === "number") return v;
+  const s = String(v ?? "").replace(/[R$\s]/g, "");
+  if (!s) return 0;
+  const n = s.includes(",") ? parseFloat(s.replace(/\./g, "").replace(",", ".")) : parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
 
-function AddFranquiaModal({ onClose }: { onClose: () => void }) {
-  const addFranquia = useFinanceiroStore((s) => s.addFranquia);
-  const [form, setForm] = useState({ cidade: "", cnpj: "", vencimentoBoleto: "", razaoSocial: "" });
+function semAcento(s: string): string {
+  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+
+// Normaliza razão social para comparação: sem acento, pontuação e sufixos societários
+function normalizeNome(s: string): string {
+  return semAcento(s)
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\b(ltda|limitada|me|epp|eireli|sa|s a|cia)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// ─── Franquia Modal (nova + editar) ───────────────────────────────────────────
+
+function FranquiaModal({ existing, onClose }: { existing?: Franquia; onClose: () => void }) {
+  const { addFranquia, updateFranquia } = useFinanceiroStore();
+  const [form, setForm] = useState({
+    cidade: existing?.cidade ?? "",
+    cnpj: existing ? formatCnpj(existing.cnpj) : "",
+    vencimentoBoleto: existing ? String(existing.vencimentoBoleto) : "",
+    razaoSocial: existing?.razaoSocial ?? "",
+  });
 
   function handleSave() {
     if (!form.cidade || !form.cnpj) return;
-    addFranquia({ cidade: form.cidade, cnpj: normalizeCnpj(form.cnpj), vencimentoBoleto: parseInt(form.vencimentoBoleto) || 10, razaoSocial: form.razaoSocial || undefined });
+    const data = {
+      cidade: form.cidade.trim(),
+      cnpj: normalizeCnpj(form.cnpj),
+      vencimentoBoleto: parseInt(form.vencimentoBoleto) || 10,
+      razaoSocial: form.razaoSocial.trim() || undefined,
+    };
+    if (existing) updateFranquia(existing.id, data);
+    else addFranquia(data);
     onClose();
   }
 
@@ -45,7 +79,7 @@ function AddFranquiaModal({ onClose }: { onClose: () => void }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-slate-900 p-6 shadow-2xl">
         <div className="mb-5 flex items-center justify-between">
-          <h2 className="font-semibold text-slate-100">Nova Franquia</h2>
+          <h2 className="font-semibold text-slate-100">{existing ? "Editar Franquia" : "Nova Franquia"}</h2>
           <button onClick={onClose} className="text-slate-500 hover:text-slate-300"><X size={16} /></button>
         </div>
         <div className="space-y-4">
@@ -61,7 +95,7 @@ function AddFranquiaModal({ onClose }: { onClose: () => void }) {
           </div>
           <div className="flex flex-col gap-1.5">
             <span className={lbl}>Razão Social</span>
-            <input className={inp} placeholder="Opcional" value={form.razaoSocial}
+            <input className={inp} placeholder="Como aparece no relatório de vendas" value={form.razaoSocial}
               onChange={(e) => setForm((f) => ({ ...f, razaoSocial: e.target.value }))} />
           </div>
           <div className="flex flex-col gap-1.5">
@@ -86,17 +120,37 @@ function AddFranquiaModal({ onClose }: { onClose: () => void }) {
 
 interface RelatorioRow {
   cnpj: string;
+  razaoSocial: string;
   franquia?: Franquia;
+  via?: "cnpj" | "razao" | "manual";
   baseCalculo: number;
   valorTroca: number;
   valorApurado: number;
   royalties: number;
   marketing: number;
-  matched: boolean;
+}
+
+// CNPJ primeiro; se não houver/não bater, tenta pela razão social cadastrada
+function findFranquia(franquias: Franquia[], cnpj: string, razao: string): { franquia?: Franquia; via?: "cnpj" | "razao" } {
+  if (cnpj.length >= 14) {
+    const f = franquias.find((x) => x.cnpj === cnpj);
+    if (f) return { franquia: f, via: "cnpj" };
+  }
+  const n = normalizeNome(razao);
+  if (!n) return {};
+  const comRazao = franquias.filter((x) => x.razaoSocial && normalizeNome(x.razaoSocial).length >= 4);
+  const exata = comRazao.find((x) => normalizeNome(x.razaoSocial!) === n);
+  if (exata) return { franquia: exata, via: "razao" };
+  const parciais = comRazao.filter((x) => {
+    const fn = normalizeNome(x.razaoSocial!);
+    return fn.includes(n) || n.includes(fn);
+  });
+  if (parciais.length === 1) return { franquia: parciais[0], via: "razao" };
+  return {};
 }
 
 function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
-  const { franquias, addLancamentoFranquia } = useFinanceiroStore();
+  const { franquias, addLancamentoFranquia, updateFranquia } = useFinanceiroStore();
   const [mes, setMes] = useState(currentMes());
   const [rows, setRows] = useState<RelatorioRow[]>([]);
   const [step, setStep] = useState<"upload" | "confirm">("upload");
@@ -111,25 +165,26 @@ function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
       const json: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
       if (!json.length) return;
 
-      const headers = Object.keys(json[0]).map((h) => h.toLowerCase().trim());
+      const colKeys = Object.keys(json[0]);
+      const headers = colKeys.map((h) => semAcento(h).trim());
       const cnpjIdx = headers.findIndex((h) => h.includes("cnpj"));
       const baseIdx = headers.findIndex((h) => h.includes("base") || h.includes("apura"));
       const trocaIdx = headers.findIndex((h) => h.includes("troca") || h.includes("desconto") || h.includes("devoluc"));
+      let razaoIdx = headers.findIndex((h) => h.includes("razao") || h.includes("social"));
+      if (razaoIdx < 0) razaoIdx = headers.findIndex((h) => ["nome", "empresa", "franquia", "cliente", "loja"].some((k) => h.includes(k)));
 
-      const colKeys = Object.keys(json[0]);
       const parsed: RelatorioRow[] = json.map((row) => {
-        const rawCnpj = String(cnpjIdx >= 0 ? row[colKeys[cnpjIdx]] : "");
-        const cnpj = normalizeCnpj(rawCnpj);
-        const base = baseIdx >= 0 ? parseFloat(String(row[colKeys[baseIdx]]).replace(",", ".")) || 0 : 0;
-        const troca = trocaIdx >= 0 ? parseFloat(String(row[colKeys[trocaIdx]]).replace(",", ".")) || 0 : 0;
+        const cnpj = normalizeCnpj(String(cnpjIdx >= 0 ? row[colKeys[cnpjIdx]] : ""));
+        const razaoSocial = razaoIdx >= 0 ? String(row[colKeys[razaoIdx]]).trim() : "";
+        const base = baseIdx >= 0 ? parseValor(row[colKeys[baseIdx]]) : 0;
+        const troca = trocaIdx >= 0 ? parseValor(row[colKeys[trocaIdx]]) : 0;
         const apurado = Math.max(0, base - troca);
-        const franquia = franquias.find((f) => f.cnpj === cnpj);
+        const { franquia, via } = findFranquia(franquias, cnpj, razaoSocial);
         return {
-          cnpj, franquia, baseCalculo: base, valorTroca: troca,
+          cnpj, razaoSocial, franquia, via, baseCalculo: base, valorTroca: troca,
           valorApurado: apurado, royalties: apurado * 0.06, marketing: apurado * 0.02,
-          matched: !!franquia,
         };
-      }).filter((r) => r.cnpj.length >= 14);
+      }).filter((r) => (r.cnpj.length >= 14 || r.razaoSocial) && !/^(total|soma|subtotal)/i.test(r.razaoSocial));
 
       setRows(parsed);
       setStep("confirm");
@@ -137,20 +192,29 @@ function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
     reader.readAsArrayBuffer(file);
   }
 
+  function setRowFranquia(i: number, franquiaId: string) {
+    const f = franquias.find((x) => x.id === franquiaId);
+    setRows((prev) => prev.map((r, j) => (j === i ? { ...r, franquia: f, via: f ? "manual" : undefined } : r)));
+  }
+
   function handleConfirm() {
     for (const row of rows) {
       if (!row.franquia) continue;
       addLancamentoFranquia({ franquiaId: row.franquia.id, mesReferencia: mes, tipo: "royalties", baseCalculo: row.baseCalculo, valorTroca: row.valorTroca, valorApurado: row.valorApurado, valor: row.royalties });
       addLancamentoFranquia({ franquiaId: row.franquia.id, mesReferencia: mes, tipo: "marketing", baseCalculo: row.baseCalculo, valorTroca: row.valorTroca, valorApurado: row.valorApurado, valor: row.marketing });
+      // Aprende a razão social: no próximo mês essa franquia já é reconhecida sozinha
+      if (row.razaoSocial && !row.franquia.razaoSocial) {
+        updateFranquia(row.franquia.id, { razaoSocial: row.razaoSocial });
+      }
     }
     onClose();
   }
 
-  const unmatched = rows.filter((r) => !r.matched);
+  const unmatched = rows.filter((r) => !r.franquia);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="flex w-full max-w-2xl flex-col rounded-2xl border border-white/[0.08] bg-slate-900 shadow-2xl" style={{ maxHeight: "85vh" }}>
+      <div className="flex w-full max-w-3xl flex-col rounded-2xl border border-white/[0.08] bg-slate-900 shadow-2xl" style={{ maxHeight: "85vh" }}>
         <div className="flex shrink-0 items-center justify-between border-b border-white/[0.06] px-6 py-4">
           <h2 className="font-semibold text-slate-100">Importar Relatório de Vendas</h2>
           <button onClick={onClose} className="text-slate-500 hover:text-slate-300"><X size={16} /></button>
@@ -177,24 +241,39 @@ function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
                 <div className="flex items-start gap-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3">
                   <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-400" />
                   <p className="text-sm text-amber-300">
-                    {unmatched.length} CNPJ{unmatched.length > 1 ? "s" : ""} não encontrado{unmatched.length > 1 ? "s" : ""} no cadastro:{" "}
-                    {unmatched.map((r) => formatCnpj(r.cnpj)).join(", ")}
+                    {unmatched.length} linha{unmatched.length > 1 ? "s" : ""} sem franquia identificada — escolha na lista abaixo.
+                    A razão social fica salva na franquia e no próximo mês ela é reconhecida sozinha.
                   </p>
                 </div>
               )}
               <div className="overflow-hidden rounded-xl border border-white/[0.07]">
-                <div className="grid grid-cols-6 border-b border-white/[0.06] px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                  <span className="col-span-2">Franquia / CNPJ</span>
+                <div className="grid grid-cols-7 border-b border-white/[0.06] px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  <span className="col-span-3">No relatório → Franquia</span>
                   <span className="text-right">Base</span>
                   <span className="text-right">Troca</span>
                   <span className="text-right">Royalties 6%</span>
                   <span className="text-right">Marketing 2%</span>
                 </div>
                 {rows.map((row, i) => (
-                  <div key={i} className={`grid grid-cols-6 items-center border-b border-white/[0.04] px-4 py-2.5 last:border-0 ${!row.matched ? "opacity-50" : ""}`}>
-                    <div className="col-span-2 min-w-0">
-                      <p className="truncate text-sm font-medium text-slate-200">{row.franquia?.cidade ?? "—"}</p>
-                      <p className="text-[11px] text-slate-600">{formatCnpj(row.cnpj)}</p>
+                  <div key={i} className={`grid grid-cols-7 items-center gap-2 border-b border-white/[0.04] px-4 py-2.5 last:border-0 ${!row.franquia ? "bg-amber-500/[0.03]" : ""}`}>
+                    <div className="col-span-3 min-w-0 space-y-1">
+                      <p className="truncate text-xs text-slate-400" title={row.razaoSocial}>
+                        {row.razaoSocial || "—"}{row.cnpj.length >= 14 ? ` · ${formatCnpj(row.cnpj)}` : ""}
+                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <select value={row.franquia?.id ?? ""} onChange={(e) => setRowFranquia(i, e.target.value)}
+                          className={`min-w-0 flex-1 rounded-lg border bg-slate-800 px-2 py-1 text-xs outline-none focus:border-accentPositive/40 ${row.franquia ? "border-white/[0.08] text-slate-200" : "border-amber-500/30 text-amber-300"}`}>
+                          <option value="">— Não importar —</option>
+                          {franquias.map((f) => (
+                            <option key={f.id} value={f.id}>{f.cidade}{f.razaoSocial ? ` — ${f.razaoSocial}` : ""}</option>
+                          ))}
+                        </select>
+                        {row.via && (
+                          <span className="shrink-0 rounded bg-white/[0.05] px-1.5 py-0.5 text-[9px] font-semibold uppercase text-slate-500">
+                            {row.via === "cnpj" ? "CNPJ" : row.via === "razao" ? "Razão" : "Manual"}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <span className="text-right text-xs tabular-nums text-slate-400">{toCurrencyBRL(row.baseCalculo)}</span>
                     <span className="text-right text-xs tabular-nums text-slate-400">{toCurrencyBRL(row.valorTroca)}</span>
@@ -211,9 +290,9 @@ function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
           <div className="flex shrink-0 gap-3 border-t border-white/[0.06] px-6 py-4">
             <button onClick={() => { setStep("upload"); setRows([]); }}
               className="flex-1 rounded-xl border border-white/[0.08] py-2.5 text-sm text-slate-400 hover:bg-white/[0.04]">Voltar</button>
-            <button onClick={handleConfirm} disabled={!rows.some((r) => r.matched)}
+            <button onClick={handleConfirm} disabled={!rows.some((r) => r.franquia)}
               className="flex-1 rounded-xl bg-accentPositive/10 py-2.5 text-sm font-medium text-accentPositive hover:bg-accentPositive/20 disabled:opacity-40 disabled:cursor-not-allowed">
-              Confirmar e Gravar ({rows.filter((r) => r.matched).length} franquias)
+              Confirmar e Gravar ({rows.filter((r) => r.franquia).length} franquias)
             </button>
           </div>
         )}
@@ -433,6 +512,8 @@ export function GestaoFranquiasPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mes, setMes] = useState(currentMes());
   const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState<Franquia | null>(null);
+  const [deleting, setDeleting] = useState<Franquia | null>(null);
   const [showImportRel, setShowImportRel] = useState(false);
   const [showImportNotas, setShowImportNotas] = useState(false);
   const [avulsoFranquia, setAvulsoFranquia] = useState<Franquia | null>(null);
@@ -460,17 +541,23 @@ export function GestaoFranquiasPage() {
             <p className="px-4 py-6 text-center text-xs text-slate-600">Nenhuma franquia.</p>
           ) : (
             franquias.map((f) => (
-              <button key={f.id} onClick={() => setSelectedId(f.id)}
-                className={`flex w-full items-center gap-2 border-b border-white/[0.04] px-3 py-2.5 text-left last:border-0 transition ${selectedId === f.id ? "bg-accentPositive/10 text-accentPositive" : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"}`}>
+              <div key={f.id} role="button" tabIndex={0} onClick={() => setSelectedId(f.id)}
+                onKeyDown={(e) => { if (e.key === "Enter") setSelectedId(f.id); }}
+                className={`group flex w-full cursor-pointer items-center gap-2 border-b border-white/[0.04] px-3 py-2.5 text-left last:border-0 transition ${selectedId === f.id ? "bg-accentPositive/10 text-accentPositive" : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"}`}>
                 <div className="flex-1 min-w-0">
                   <p className="truncate text-sm font-medium">{f.cidade}</p>
+                  {f.razaoSocial && <p className="truncate text-[10px] text-slate-500" title={f.razaoSocial}>{f.razaoSocial}</p>}
                   <p className="text-[10px] text-slate-600">{formatCnpj(f.cnpj)}</p>
                 </div>
-                <button onClick={(e) => { e.stopPropagation(); removeFranquia(f.id); if (selectedId === f.id) setSelectedId(null); }}
-                  className="shrink-0 text-slate-700 hover:text-red-400">
-                  <Trash2 size={12} />
+                <button onClick={(e) => { e.stopPropagation(); setEditing(f); }} title="Editar"
+                  className="shrink-0 rounded p-1 text-slate-600 opacity-60 transition hover:bg-white/[0.06] hover:text-slate-200 group-hover:opacity-100">
+                  <Pencil size={11} />
                 </button>
-              </button>
+                <button onClick={(e) => { e.stopPropagation(); setDeleting(f); }} title="Excluir"
+                  className="shrink-0 rounded p-1 text-slate-700 opacity-60 transition hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100">
+                  <Trash2 size={11} />
+                </button>
+              </div>
             ))
           )}
         </div>
@@ -511,7 +598,9 @@ export function GestaoFranquiasPage() {
           <div className="flex flex-col overflow-hidden rounded-xl border border-white/[0.07] bg-slate-800/40">
             <div className="shrink-0 border-b border-white/[0.06] px-4 py-3">
               <p className="text-sm font-semibold text-slate-200">{selected.cidade}</p>
-              <p className="text-xs text-slate-600">Vencimento: dia {selected.vencimentoBoleto} · {formatCnpj(selected.cnpj)}</p>
+              <p className="text-xs text-slate-600">
+                {selected.razaoSocial ? `${selected.razaoSocial} · ` : ""}Vencimento: dia {selected.vencimentoBoleto} · {formatCnpj(selected.cnpj)}
+              </p>
             </div>
             <div className="flex-1 overflow-y-auto">
               {lancamentosMes.length === 0 ? (
@@ -532,7 +621,34 @@ export function GestaoFranquiasPage() {
         )}
       </div>
 
-      {showAdd && <AddFranquiaModal onClose={() => setShowAdd(false)} />}
+      {showAdd && <FranquiaModal onClose={() => setShowAdd(false)} />}
+      {editing && <FranquiaModal existing={editing} onClose={() => setEditing(null)} />}
+      {deleting && (() => {
+        const qtd = lancamentosFranquia.filter((l) => l.franquiaId === deleting.id).length;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-slate-900 p-6 shadow-2xl">
+              <div className="mb-2 flex items-center gap-2 text-red-400">
+                <Trash2 size={16} />
+                <h2 className="font-semibold">Excluir {deleting.cidade}?</h2>
+              </div>
+              <p className="text-sm text-slate-400">
+                {qtd > 0
+                  ? `Isso também apaga ${qtd} lançamento${qtd > 1 ? "s" : ""} dessa franquia (royalties, marketing, avulsos, notas e boletos anexados). Não dá para desfazer.`
+                  : "A franquia não tem lançamentos. Não dá para desfazer."}
+              </p>
+              <div className="mt-5 flex gap-3">
+                <button onClick={() => setDeleting(null)}
+                  className="flex-1 rounded-xl border border-white/[0.08] py-2.5 text-sm text-slate-400 hover:bg-white/[0.04]">Cancelar</button>
+                <button onClick={() => { removeFranquia(deleting.id); if (selectedId === deleting.id) setSelectedId(null); setDeleting(null); }}
+                  className="flex-1 rounded-xl bg-red-500/15 py-2.5 text-sm font-medium text-red-400 hover:bg-red-500/25">
+                  Excluir
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {showImportRel && <ImportRelatorioModal onClose={() => setShowImportRel(false)} />}
       {showImportNotas && <ImportNotasModal mes={mes} onClose={() => setShowImportNotas(false)} />}
       {avulsoFranquia && <AddAvulsoModal franquia={avulsoFranquia} mes={mes} onClose={() => setAvulsoFranquia(null)} />}
