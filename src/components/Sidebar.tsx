@@ -4,6 +4,7 @@ import { AppTab, BankId } from "../types/finance";
 import { BANKS } from "../data/constants";
 import { BankLogo } from "./BankLogo";
 import { UserProfile } from "../store/useFinancierStore";
+import { VersionCheckButton } from "./UpdateChecker";
 
 interface Props {
   activeTab: AppTab;
@@ -104,6 +105,8 @@ export function Sidebar({ activeTab, selectedBank, activeUser, onChangeTab, onCh
           Trocar banco
         </button>
       </div>
+
+      <VersionCheckButton />
 
     </aside>
   );
