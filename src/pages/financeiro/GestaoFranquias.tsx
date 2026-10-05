@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
-import { AlertTriangle, Check, Copy, FileText, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
+import { AlertTriangle, Check, Copy, FileSpreadsheet, FileText, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
+import { PlanilhaFranquiasModal } from "./PlanilhaFranquias";
 import * as XLSX from "xlsx";
 import { useFinanceiroStore } from "../../store/useFinanceiroStore";
 import { Franquia, LancamentoFranquia } from "../../types/finance";
@@ -33,6 +34,10 @@ function parseValor(v: unknown): number {
   if (!s) return 0;
   const n = s.includes(",") ? parseFloat(s.replace(/\./g, "").replace(",", ".")) : parseFloat(s);
   return isNaN(n) ? 0 : n;
+}
+
+function centavos(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 function semAcento(s: string): string {
@@ -207,7 +212,8 @@ function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
         const { franquia, via } = findFranquia(franquias, cnpj, razaoSocial);
         return {
           cnpj, razaoSocial, franquia, via, baseCalculo: base, valorTroca: troca,
-          valorApurado: apurado, royalties: apurado * 0.06, marketing: apurado * 0.02,
+          // Valores cobrados em boleto: arredonda para centavos já no cálculo
+          valorApurado: centavos(apurado), royalties: centavos(apurado * 0.06), marketing: centavos(apurado * 0.02),
         };
       }).filter((r) => (r.cnpj.length >= 14 || r.razaoSocial) && !/^(total|soma|subtotal)/i.test(r.razaoSocial));
 
@@ -552,6 +558,7 @@ export function GestaoFranquiasPage() {
   const [editing, setEditing] = useState<Franquia | null>(null);
   const [deleting, setDeleting] = useState<Franquia | null>(null);
   const [showImportRel, setShowImportRel] = useState(false);
+  const [showPlanilha, setShowPlanilha] = useState(false);
   const [showImportNotas, setShowImportNotas] = useState(false);
   const [avulsoFranquia, setAvulsoFranquia] = useState<Franquia | null>(null);
 
@@ -608,6 +615,10 @@ export function GestaoFranquiasPage() {
           <button onClick={() => setShowImportRel(true)}
             className="flex items-center gap-1.5 rounded-xl border border-white/[0.08] px-3 py-2 text-xs text-slate-400 transition hover:border-accentPositive/30 hover:text-accentPositive">
             <Upload size={12} /> Importar Relatório
+          </button>
+          <button onClick={() => setShowPlanilha(true)}
+            className="flex items-center gap-1.5 rounded-xl border border-white/[0.08] px-3 py-2 text-xs text-slate-400 transition hover:border-emerald-400/30 hover:text-emerald-400">
+            <FileSpreadsheet size={12} /> Planilha do mês
           </button>
           {selected && (
             <>
@@ -687,6 +698,7 @@ export function GestaoFranquiasPage() {
         );
       })()}
       {showImportRel && <ImportRelatorioModal onClose={() => setShowImportRel(false)} />}
+      {showPlanilha && <PlanilhaFranquiasModal mes={mes} onClose={() => setShowPlanilha(false)} />}
       {showImportNotas && <ImportNotasModal mes={mes} onClose={() => setShowImportNotas(false)} />}
       {avulsoFranquia && <AddAvulsoModal franquia={avulsoFranquia} mes={mes} onClose={() => setAvulsoFranquia(null)} />}
     </div>

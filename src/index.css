@@ -57,7 +57,51 @@ select option {
 }
 
 /* ── Print ──────────────────────────────────────────────────────────────── */
+.print-only { display: none; }
+
 @media print {
+  /* Planilha de franquias: página própria em paisagem (muitas colunas) */
+  @page franquias {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+  html:has(#franquias-print), body:has(#franquias-print) {
+    width: auto !important;
+  }
+  #franquias-print {
+    display: block !important;
+    page: franquias;
+    font-family: Inter, Arial, sans-serif;
+    color: #0f172a;
+    font-size: 8.5pt;
+  }
+  #franquias-print .fp-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 2px solid #0f172a;
+    padding-bottom: 4mm;
+    margin-bottom: 3mm;
+  }
+  #franquias-print .fp-title { font-size: 14pt; font-weight: 800; }
+  #franquias-print .fp-sub { font-size: 8pt; color: #475569; }
+  #franquias-print table { width: 100%; border-collapse: collapse; }
+  #franquias-print th {
+    background: #e2e8f0;
+    text-align: left;
+    font-size: 7.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 2mm 1.5mm;
+    border-bottom: 1px solid #94a3b8;
+  }
+  #franquias-print td { padding: 1.6mm 1.5mm; border-bottom: 1px solid #e2e8f0; }
+  #franquias-print tbody tr:nth-child(even) td { background: #f8fafc; }
+  #franquias-print tr { break-inside: avoid; }
+  #franquias-print tfoot td { font-weight: 800; border-top: 2px solid #0f172a; background: #f1f5f9; }
+  #franquias-print .n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #franquias-print .b { font-weight: 700; }
+
   @page {
     size: A4 portrait;
     margin: 0;
