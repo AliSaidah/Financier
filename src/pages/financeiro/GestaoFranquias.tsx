@@ -188,6 +188,15 @@ function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
       }
       let razaoIdx = headers.findIndex((h) => h.includes("razao") || h.includes("social"));
       if (razaoIdx < 0) razaoIdx = headers.findIndex((h) => ["nome", "empresa", "franquia", "cliente", "loja"].some((k) => h.includes(k)));
+      if (razaoIdx < 0) {
+        // Coluna dos nomes sem título: usa a que tem mais texto (não-numérico)
+        let melhor = 0;
+        colKeys.forEach((k, i) => {
+          if (i === baseIdx || i === trocaIdx || i === cnpjIdx) return;
+          const textos = json.filter((r) => typeof r[k] === "string" && /[a-zA-ZÀ-ÿ]/.test(r[k] as string)).length;
+          if (textos > melhor) { melhor = textos; razaoIdx = i; }
+        });
+      }
 
       const parsed: RelatorioRow[] = json.map((row) => {
         const cnpj = normalizeCnpj(String(cnpjIdx >= 0 ? row[colKeys[cnpjIdx]] : ""));
@@ -202,6 +211,10 @@ function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
         };
       }).filter((r) => (r.cnpj.length >= 14 || r.razaoSocial) && !/^(total|soma|subtotal)/i.test(r.razaoSocial));
 
+      if (parsed.length === 0) {
+        setErro(`Não encontrei nenhuma linha de franquia na planilha. Colunas encontradas: ${colKeys.map((k) => `"${k.startsWith("__EMPTY") ? "(sem título)" : k}"`).join(", ")}.`);
+        return;
+      }
       setRows(parsed);
       setStep("confirm");
     };
