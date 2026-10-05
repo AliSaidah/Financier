@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { AlertTriangle, Check, Copy, FileSpreadsheet, FileText, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
 import { PlanilhaFranquiasModal } from "./PlanilhaFranquias";
+import { calcularCobranca, centavos, MARKETING_MIN, ROYALTIES_MIN } from "../../utils/royalties";
 import * as XLSX from "xlsx";
 import { useFinanceiroStore } from "../../store/useFinanceiroStore";
 import { Franquia, LancamentoFranquia } from "../../types/finance";
@@ -34,10 +35,6 @@ function parseValor(v: unknown): number {
   if (!s) return 0;
   const n = s.includes(",") ? parseFloat(s.replace(/\./g, "").replace(",", ".")) : parseFloat(s);
   return isNaN(n) ? 0 : n;
-}
-
-function centavos(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 function semAcento(s: string): string {
@@ -133,6 +130,8 @@ interface RelatorioRow {
   valorApurado: number;
   royalties: number;
   marketing: number;
+  royaltiesMinimo: boolean;
+  marketingMinimo: boolean;
 }
 
 // CNPJ → razão social cadastrada → cidade contida no nome (último recurso, revisar)
@@ -165,7 +164,7 @@ const CHAVES_BASE = ["base", "apura", "venda", "bruta", "faturamento", "receita"
 const CHAVES_TROCA = ["troca", "desconto", "devoluc"];
 
 function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
-  const { franquias, addLancamentoFranquia, updateFranquia } = useFinanceiroStore();
+  const { franquias, lancamentosFranquia, addLancamentoFranquia, updateLancamentoFranquia, removeLancamentoFranquia, updateFranquia } = useFinanceiroStore();
   const [mes, setMes] = useState(currentMes());
   const [rows, setRows] = useState<RelatorioRow[]>([]);
   const [step, setStep] = useState<"upload" | "confirm">("upload");
@@ -208,12 +207,11 @@ function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
         const razaoSocial = razaoIdx >= 0 ? String(row[colKeys[razaoIdx]]).trim() : "";
         const base = baseIdx >= 0 ? parseValor(row[colKeys[baseIdx]]) : 0;
         const troca = trocaIdx >= 0 ? parseValor(row[colKeys[trocaIdx]]) : 0;
-        const apurado = Math.max(0, base - troca);
+        const apurado = centavos(Math.max(0, base - troca));
         const { franquia, via } = findFranquia(franquias, cnpj, razaoSocial);
         return {
           cnpj, razaoSocial, franquia, via, baseCalculo: base, valorTroca: troca,
-          // Valores cobrados em boleto: arredonda para centavos já no cálculo
-          valorApurado: centavos(apurado), royalties: centavos(apurado * 0.06), marketing: centavos(apurado * 0.02),
+          valorApurado: apurado, ...calcularCobranca(apurado),
         };
       }).filter((r) => (r.cnpj.length >= 14 || r.razaoSocial) && !/^(total|soma|subtotal)/i.test(r.razaoSocial));
 
@@ -232,11 +230,28 @@ function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
     setRows((prev) => prev.map((r, j) => (j === i ? { ...r, franquia: f, via: f ? "manual" : undefined } : r)));
   }
 
+  // Reimportar o mesmo mês atualiza os valores em vez de duplicar lançamentos.
+  // Notas e boletos já anexados são mantidos (inclusive os que estavam em duplicatas antigas).
   function handleConfirm() {
     for (const row of rows) {
       if (!row.franquia) continue;
-      addLancamentoFranquia({ franquiaId: row.franquia.id, mesReferencia: mes, tipo: "royalties", baseCalculo: row.baseCalculo, valorTroca: row.valorTroca, valorApurado: row.valorApurado, valor: row.royalties });
-      addLancamentoFranquia({ franquiaId: row.franquia.id, mesReferencia: mes, tipo: "marketing", baseCalculo: row.baseCalculo, valorTroca: row.valorTroca, valorApurado: row.valorApurado, valor: row.marketing });
+      const dados = { baseCalculo: row.baseCalculo, valorTroca: row.valorTroca, valorApurado: row.valorApurado };
+      for (const [tipo, valor] of [["royalties", row.royalties], ["marketing", row.marketing]] as const) {
+        const existentes = useFinanceiroStore.getState().lancamentosFranquia
+          .filter((l) => l.franquiaId === row.franquia!.id && l.mesReferencia === mes && l.tipo === tipo);
+        if (existentes.length === 0) {
+          addLancamentoFranquia({ franquiaId: row.franquia.id, mesReferencia: mes, tipo, ...dados, valor });
+          continue;
+        }
+        const [manter, ...duplicatas] = existentes;
+        const anexos = {
+          numeroNota: manter.numeroNota ?? duplicatas.find((d) => d.numeroNota)?.numeroNota,
+          notaPdfBase64: manter.notaPdfBase64 ?? duplicatas.find((d) => d.notaPdfBase64)?.notaPdfBase64,
+          boletoPdfBase64: manter.boletoPdfBase64 ?? duplicatas.find((d) => d.boletoPdfBase64)?.boletoPdfBase64,
+        };
+        updateLancamentoFranquia(manter.id, { ...dados, valor, ...anexos });
+        duplicatas.forEach((d) => removeLancamentoFranquia(d.id));
+      }
       // Aprende a razão social: no próximo mês essa franquia já é reconhecida sozinha
       if (row.razaoSocial && !row.franquia.razaoSocial) {
         updateFranquia(row.franquia.id, { razaoSocial: row.razaoSocial });
@@ -246,6 +261,11 @@ function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
   }
 
   const unmatched = rows.filter((r) => !r.franquia);
+  const jaLancadas = new Set(
+    rows.filter((r) => r.franquia && lancamentosFranquia.some((l) =>
+      l.franquiaId === r.franquia!.id && l.mesReferencia === mes && l.tipo !== "avulso")).map((r) => r.franquia!.id),
+  ).size;
+  const comMinimo = rows.filter((r) => r.franquia && (r.royaltiesMinimo || r.marketingMinimo)).length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -287,13 +307,28 @@ function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
                   </p>
                 </div>
               )}
+              {jaLancadas > 0 && (
+                <div className="flex items-start gap-2 rounded-xl border border-sky-500/20 bg-sky-500/5 px-4 py-3">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0 text-sky-400" />
+                  <p className="text-sm text-sky-300">
+                    {jaLancadas} franquia{jaLancadas > 1 ? "s já têm" : " já tem"} royalties/marketing em {mesLabel(mes)}.
+                    Os valores serão <b>atualizados</b> (sem duplicar); notas e boletos anexados são mantidos.
+                  </p>
+                </div>
+              )}
+              {comMinimo > 0 && (
+                <p className="px-1 text-xs text-slate-500">
+                  <span className="font-semibold text-amber-400">mín.</span> = percentual ficou abaixo do mínimo
+                  (royalties {toCurrencyBRL(ROYALTIES_MIN)} · marketing {toCurrencyBRL(MARKETING_MIN)}) e foi cobrado o mínimo — {comMinimo} franquia{comMinimo > 1 ? "s" : ""}.
+                </p>
+              )}
               <div className="overflow-hidden rounded-xl border border-white/[0.07]">
                 <div className="grid grid-cols-7 border-b border-white/[0.06] px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                   <span className="col-span-3">No relatório → Franquia</span>
                   <span className="text-right">Base</span>
                   <span className="text-right">Troca</span>
-                  <span className="text-right">Royalties 6%</span>
-                  <span className="text-right">Marketing 2%</span>
+                  <span className="text-right">Royalties 6%<br /><span className="normal-case tracking-normal text-slate-600">mín. 1.200</span></span>
+                  <span className="text-right">Marketing 2%<br /><span className="normal-case tracking-normal text-slate-600">mín. 600</span></span>
                 </div>
                 {rows.map((row, i) => (
                   <div key={i} className={`grid grid-cols-7 items-center gap-2 border-b border-white/[0.04] px-4 py-2.5 last:border-0 ${!row.franquia ? "bg-amber-500/[0.03]" : ""}`}>
@@ -320,8 +355,14 @@ function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
                     </div>
                     <span className="text-right text-xs tabular-nums text-slate-400">{toCurrencyBRL(row.baseCalculo)}</span>
                     <span className="text-right text-xs tabular-nums text-slate-400">{toCurrencyBRL(row.valorTroca)}</span>
-                    <span className="text-right text-sm font-semibold tabular-nums text-accentPositive">{toCurrencyBRL(row.royalties)}</span>
-                    <span className="text-right text-sm font-semibold tabular-nums text-sky-400">{toCurrencyBRL(row.marketing)}</span>
+                    <span className="text-right text-sm font-semibold tabular-nums text-accentPositive">
+                      {toCurrencyBRL(row.royalties)}
+                      {row.royaltiesMinimo && <span className="block text-[9px] font-semibold uppercase text-amber-400">mín.</span>}
+                    </span>
+                    <span className="text-right text-sm font-semibold tabular-nums text-sky-400">
+                      {toCurrencyBRL(row.marketing)}
+                      {row.marketingMinimo && <span className="block text-[9px] font-semibold uppercase text-amber-400">mín.</span>}
+                    </span>
                   </div>
                 ))}
               </div>

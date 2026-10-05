@@ -5,6 +5,7 @@ import { Check, FileSpreadsheet, Printer, X } from "lucide-react";
 import { useFinanceiroStore } from "../../store/useFinanceiroStore";
 import { toCurrencyBRL } from "../../lib/formatters";
 import { formatCnpj } from "../../utils/pdfExtractor";
+import { MARKETING_MIN, MARKETING_PCT, REGRA_TEXTO, ROYALTIES_MIN, ROYALTIES_PCT } from "../../utils/royalties";
 
 const MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 
@@ -22,6 +23,9 @@ interface Linha {
   vencimento: string;
   notas: string;
   boleto: boolean;
+  royMin: boolean;      // cobrado o mínimo porque 6% ficou abaixo
+  mktMin: boolean;      // cobrado o mínimo porque 2% ficou abaixo
+  abaixoMinimo: boolean; // gravado abaixo do mínimo (importado antes da regra)
 }
 
 const VALORES = ["base", "troca", "apurado", "royalties", "marketing", "avulso", "total"] as const;
@@ -56,13 +60,17 @@ export function PlanilhaFranquiasModal({ mes, onClose }: { mes: string; onClose:
       const marketing = c2(soma(mkt, "valor"));
       const avulso = c2(soma(doF.filter((l) => l.tipo === "avulso"), "valor"));
       const notas = [...roy, ...mkt].map((l) => l.numeroNota).filter(Boolean).join(" / ");
+      const apurado = c2(soma(roy, "valorApurado"));
       return {
         cidade: f.cidade,
         razaoSocial: f.razaoSocial ?? "",
         cnpj: f.cnpj,
         base: c2(soma(roy, "baseCalculo")),
         troca: c2(soma(roy, "valorTroca")),
-        apurado: c2(soma(roy, "valorApurado")),
+        apurado,
+        royMin: roy.length > 0 && c2(apurado * ROYALTIES_PCT) < ROYALTIES_MIN && royalties >= ROYALTIES_MIN,
+        mktMin: mkt.length > 0 && c2(apurado * MARKETING_PCT) < MARKETING_MIN && marketing >= MARKETING_MIN,
+        abaixoMinimo: (roy.length > 0 && royalties < ROYALTIES_MIN) || (mkt.length > 0 && marketing < MARKETING_MIN),
         royalties, marketing, avulso,
         total: c2(royalties + marketing + avulso),
         vencimento: vencimentoDe(mes, f.vencimentoBoleto),
@@ -74,15 +82,18 @@ export function PlanilhaFranquiasModal({ mes, onClose }: { mes: string; onClose:
 
   const totais = Object.fromEntries(VALORES.map((k) => [k, c2(linhas.reduce((s, l) => s + l[k], 0))])) as Record<typeof VALORES[number], number>;
   const semLancamento = franquias.length - linhas.length;
+  const abaixo = linhas.filter((l) => l.abaixoMinimo);
+  const temMinimo = linhas.some((l) => l.royMin || l.mktMin);
+  const minTxt = (l: Linha) => [l.royMin && "Royalties", l.mktMin && "Marketing"].filter(Boolean).join(" e ");
   const geradoEm = new Date().toLocaleDateString("pt-BR");
 
   function exportarExcel() {
-    const header = ["Franquia", "Razão social", "CNPJ", "Venda bruta", "Vale troca", "Apurado", "Royalties 6%", "Marketing 2%", "Avulsos", "Total a cobrar", "Vencimento", "Nº NF", "Boleto"];
+    const header = ["Franquia", "Razão social", "CNPJ", "Venda bruta", "Vale troca", "Apurado", "Royalties 6%", "Marketing 2%", "Avulsos", "Total a cobrar", "Vencimento", "Nº NF", "Boleto", "Mínimo aplicado"];
     const aoa: (string | number)[][] = [
       [`Royalties e Marketing — ${mesLabel}`],
-      [`Gerado em ${geradoEm} · Apurado = Venda bruta − Vale troca · Royalties 6% e Marketing 2% do apurado`],
+      [`Gerado em ${geradoEm} · ${REGRA_TEXTO}`],
       header,
-      ...linhas.map((l) => [l.cidade, l.razaoSocial, formatCnpj(l.cnpj), l.base, l.troca, l.apurado, l.royalties, l.marketing, l.avulso, l.total, l.vencimento, l.notas, l.boleto ? "Sim" : "Não"]),
+      ...linhas.map((l) => [l.cidade, l.razaoSocial, formatCnpj(l.cnpj), l.base, l.troca, l.apurado, l.royalties, l.marketing, l.avulso, l.total, l.vencimento, l.notas, l.boleto ? "Sim" : "Não", minTxt(l)]),
     ];
     const ws = XLSX.utils.aoa_to_sheet(aoa);
 
@@ -100,7 +111,7 @@ export function PlanilhaFranquiasModal({ mes, onClose }: { mes: string; onClose:
     }
     ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: linhaTotal - 1, c: header.length - 1 } });
     ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: header.length - 1 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: header.length - 1 } }];
-    ws["!cols"] = [18, 40, 20, 14, 12, 14, 14, 14, 12, 15, 12, 14, 8].map((wch) => ({ wch }));
+    ws["!cols"] = [18, 40, 20, 14, 12, 14, 14, 14, 12, 15, 12, 14, 8, 20].map((wch) => ({ wch }));
 
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Franquias");
@@ -140,6 +151,14 @@ export function PlanilhaFranquiasModal({ mes, onClose }: { mes: string; onClose:
             <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-white/[0.06] hover:text-slate-300"><X size={16} /></button>
           </div>
 
+          {abaixo.length > 0 && (
+            <div className="mx-6 mt-3 rounded-xl border border-amber-500/25 bg-amber-500/[0.06] px-4 py-2.5 text-sm text-amber-300">
+              {abaixo.length} franquia{abaixo.length > 1 ? "s estão" : " está"} com valor abaixo do mínimo
+              (royalties {toCurrencyBRL(ROYALTIES_MIN)} · marketing {toCurrencyBRL(MARKETING_MIN)}) — foram importadas antes da regra do mínimo:{" "}
+              <b>{abaixo.map((l) => l.cidade).join(", ")}</b>. Importe o relatório de vendas de {mesLabel} de novo para atualizar os valores.
+            </div>
+          )}
+
           <div className="flex-1 overflow-auto">
             {linhas.length === 0 ? (
               <p className="px-6 py-12 text-center text-sm text-slate-600">Nenhum lançamento de franquia em {mesLabel}. Importe o relatório de vendas primeiro.</p>
@@ -170,8 +189,12 @@ export function PlanilhaFranquiasModal({ mes, onClose }: { mes: string; onClose:
                       <td className={tdNum + " text-slate-300"}>{toCurrencyBRL(l.base)}</td>
                       <td className={tdNum + " text-slate-400"}>{toCurrencyBRL(l.troca)}</td>
                       <td className={tdNum + " text-slate-300"}>{toCurrencyBRL(l.apurado)}</td>
-                      <td className={tdNum + " font-semibold text-emerald-400"}>{toCurrencyBRL(l.royalties)}</td>
-                      <td className={tdNum + " font-semibold text-sky-400"}>{toCurrencyBRL(l.marketing)}</td>
+                      <td className={tdNum + " font-semibold " + (l.abaixoMinimo && l.royalties < ROYALTIES_MIN ? "text-amber-400" : "text-emerald-400")}>
+                        {toCurrencyBRL(l.royalties)}{l.royMin && <span className="ml-1 text-[9px] font-semibold uppercase text-amber-400">mín.</span>}
+                      </td>
+                      <td className={tdNum + " font-semibold " + (l.abaixoMinimo && l.marketing < MARKETING_MIN ? "text-amber-400" : "text-sky-400")}>
+                        {toCurrencyBRL(l.marketing)}{l.mktMin && <span className="ml-1 text-[9px] font-semibold uppercase text-amber-400">mín.</span>}
+                      </td>
                       <td className={tdNum + " text-purple-400"}>{l.avulso ? toCurrencyBRL(l.avulso) : "—"}</td>
                       <td className={tdNum + " font-bold text-white"}>{toCurrencyBRL(l.total)}</td>
                       <td className="whitespace-nowrap px-2 py-2 text-[13px] tabular-nums text-slate-400">{l.vencimento}</td>
@@ -205,7 +228,7 @@ export function PlanilhaFranquiasModal({ mes, onClose }: { mes: string; onClose:
           <div className="fp-head">
             <div>
               <div className="fp-title">Royalties e Marketing — {mesLabel}</div>
-              <div className="fp-sub">Apurado = Venda bruta − Vale troca · Royalties 6% e Marketing 2% do apurado</div>
+              <div className="fp-sub">{REGRA_TEXTO}</div>
             </div>
             <div className="fp-sub">Gerado em {geradoEm} · {linhas.length} franquias</div>
           </div>
@@ -223,7 +246,7 @@ export function PlanilhaFranquiasModal({ mes, onClose }: { mes: string; onClose:
                 <tr key={l.cnpj + l.cidade}>
                   <td className="b">{l.cidade}</td><td>{l.razaoSocial}</td>
                   <td className="n">{toCurrencyBRL(l.base)}</td><td className="n">{toCurrencyBRL(l.troca)}</td><td className="n">{toCurrencyBRL(l.apurado)}</td>
-                  <td className="n">{toCurrencyBRL(l.royalties)}</td><td className="n">{toCurrencyBRL(l.marketing)}</td>
+                  <td className="n">{toCurrencyBRL(l.royalties)}{l.royMin ? " *" : ""}</td><td className="n">{toCurrencyBRL(l.marketing)}{l.mktMin ? " *" : ""}</td>
                   <td className="n">{l.avulso ? toCurrencyBRL(l.avulso) : "—"}</td>
                   <td className="n b">{toCurrencyBRL(l.total)}</td><td>{l.vencimento}</td><td>{l.notas || "—"}</td><td>{l.boleto ? "Sim" : "—"}</td>
                 </tr>
@@ -239,6 +262,7 @@ export function PlanilhaFranquiasModal({ mes, onClose }: { mes: string; onClose:
               </tr>
             </tfoot>
           </table>
+          {temMinimo && <div className="fp-sub" style={{ marginTop: "2mm" }}>* Valor mínimo aplicado (royalties R$ 1.200,00 · marketing R$ 600,00).</div>}
         </div>,
         document.body,
       )}

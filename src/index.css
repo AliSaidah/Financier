@@ -68,11 +68,17 @@ select option {
   html:has(#franquias-print), body:has(#franquias-print) {
     width: auto !important;
   }
+  /* O body do app tem fundo escuro e o print-color-adjust:exact abaixo faria
+     ele sair impresso — no papel o fundo é sempre branco */
+  html, body {
+    background: #fff !important;
+  }
   #franquias-print {
     display: block !important;
     page: franquias;
     font-family: Inter, Arial, sans-serif;
     color: #0f172a;
+    background: #fff;
     font-size: 8.5pt;
   }
   #franquias-print .fp-head {
@@ -94,8 +100,9 @@ select option {
     letter-spacing: 0.03em;
     padding: 2mm 1.5mm;
     border-bottom: 1px solid #94a3b8;
+    white-space: nowrap;
   }
-  #franquias-print td { padding: 1.6mm 1.5mm; border-bottom: 1px solid #e2e8f0; }
+  #franquias-print td { padding: 1.6mm 1.5mm; border-bottom: 1px solid #e2e8f0; background: #fff; color: #0f172a; }
   #franquias-print tbody tr:nth-child(even) td { background: #f8fafc; }
   #franquias-print tr { break-inside: avoid; }
   #franquias-print tfoot td { font-weight: 800; border-top: 2px solid #0f172a; background: #f1f5f9; }
