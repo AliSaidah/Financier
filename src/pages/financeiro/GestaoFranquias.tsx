@@ -248,6 +248,7 @@ function ImportRelatorioModal({ onClose }: { onClose: () => void }) {
           numeroNota: manter.numeroNota ?? duplicatas.find((d) => d.numeroNota)?.numeroNota,
           notaPdfBase64: manter.notaPdfBase64 ?? duplicatas.find((d) => d.notaPdfBase64)?.notaPdfBase64,
           boletoPdfBase64: manter.boletoPdfBase64 ?? duplicatas.find((d) => d.boletoPdfBase64)?.boletoPdfBase64,
+          recebido: manter.recebido || duplicatas.some((d) => d.recebido) || undefined,
         };
         updateLancamentoFranquia(manter.id, { ...dados, valor, ...anexos });
         duplicatas.forEach((d) => removeLancamentoFranquia(d.id));
@@ -504,7 +505,12 @@ function LancamentoRow({ lanc, franquia }: { lanc: LancamentoFranquia; franquia:
             {toCurrencyBRL(lanc.baseCalculo)} − {toCurrencyBRL(lanc.valorTroca)} = {toCurrencyBRL(lanc.valorApurado)}
           </span>
         )}
-        <span className="ml-auto text-sm font-semibold tabular-nums text-slate-200">{toCurrencyBRL(lanc.valor)}</span>
+        {lanc.recebido && (
+          <span className="ml-auto flex items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-400">
+            <Check size={10} /> Recebido
+          </span>
+        )}
+        <span className={`${lanc.recebido ? "" : "ml-auto "}text-sm font-semibold tabular-nums text-slate-200`}>{toCurrencyBRL(lanc.valor)}</span>
         {lanc.numeroNota && (
           <button onClick={() => navigator.clipboard.writeText(lanc.numeroNota!)}
             className="flex items-center gap-1 rounded-lg border border-white/[0.07] px-2 py-1 text-[11px] text-slate-500 hover:text-slate-200">

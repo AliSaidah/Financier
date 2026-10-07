@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { Franquia, LancamentoFranquia, Funcionario, LancamentoFuncionario } from "../types/finance";
+import { ContasDestinoFranquias, Franquia, LancamentoFranquia, Funcionario, LancamentoFuncionario } from "../types/finance";
 
 function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -11,6 +11,8 @@ interface FinanceiroState {
   lancamentosFranquia: LancamentoFranquia[];
   funcionarios: Funcionario[];
   lancamentosFuncionario: LancamentoFuncionario[];
+  contasDestino: ContasDestinoFranquias;
+  setContasDestino: (patch: Partial<ContasDestinoFranquias>) => void;
 
   addFranquia: (f: Omit<Franquia, "id" | "createdAt">) => void;
   updateFranquia: (id: string, patch: Partial<Franquia>) => void;
@@ -36,6 +38,8 @@ export const useFinanceiroStore = create<FinanceiroState>()(
       lancamentosFranquia: [],
       funcionarios: [],
       lancamentosFuncionario: [],
+      contasDestino: {},
+      setContasDestino: (patch) => set((s) => ({ contasDestino: { ...s.contasDestino, ...patch } })),
 
       addFranquia: (f) =>
         set((s) => ({ franquias: [...s.franquias, { ...f, id: uid(), createdAt: new Date().toISOString() }] })),

@@ -31,7 +31,15 @@ export interface LancamentoFranquia {
   numeroNota?: string;
   notaPdfBase64?: string;
   boletoPdfBase64?: string;
+  recebido?: boolean; // baixa dada em Contas a Receber
   createdAt: string;
+}
+
+// Qual usuário (perfil) recebe cada tipo de cobrança das franquias em Contas a Receber
+export interface ContasDestinoFranquias {
+  royalties?: string;
+  marketing?: string;
+  avulso?: string;
 }
 
 // ─── Administração ────────────────────────────────────────────────────────────
@@ -67,6 +75,9 @@ export interface Conta {
   status: "aberto" | "quitado";
   recorrencia: "unico" | "mensal-fixo" | "mensal-variavel";
   createdAt: string;
+  // Contas geradas a partir de Franquias (não são gravadas em Contas, só exibidas)
+  origem?: "franquia";
+  lancamentoFranquiaId?: string;
 }
 
 export interface BankBalance {

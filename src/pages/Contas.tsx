@@ -6,6 +6,8 @@ import {
 } from "lucide-react";
 import { Conta } from "../types/finance";
 import { useFinancierStore } from "../store/useFinancierStore";
+import { useFinanceiroStore } from "../store/useFinanceiroStore";
+import { contasReceberFranquias } from "../utils/contasFranquias";
 import { toCurrencyBRL, splitParcelas } from "../lib/formatters";
 import { ContaModal, vencimentoValido } from "../components/ContaModal";
 import { ContasReport } from "../components/ContasReport";
@@ -113,6 +115,24 @@ export function ContasPage() {
   const { contas, addConta, updateConta, deleteConta, toggleContaQuitado, users, activeUserId, getAllUsersContas } = useFinancierStore();
   const activeUserName = users.find((u) => u.id === activeUserId)?.name ?? "Principal";
 
+  // Contas a receber vindas de Franquias (royalties/marketing/avulsos), conforme o
+  // usuário configurado para cada tipo. São só exibidas aqui — nada é gravado em `contas`.
+  const { franquias, lancamentosFranquia, contasDestino, setContasDestino, updateLancamentoFranquia } = useFinanceiroStore();
+  const contasFranquia = useMemo(
+    () => contasReceberFranquias(activeUserId, contasDestino, franquias, lancamentosFranquia),
+    [activeUserId, contasDestino, franquias, lancamentosFranquia],
+  );
+  const todasContas = useMemo(() => [...contas, ...contasFranquia], [contas, contasFranquia]);
+
+  // Baixa de conta vinda de Franquias é gravada no lançamento da franquia
+  function alternarQuitado(conta: Conta) {
+    if (conta.origem === "franquia" && conta.lancamentoFranquiaId) {
+      updateLancamentoFranquia(conta.lancamentoFranquiaId, { recebido: conta.status !== "quitado" });
+    } else {
+      toggleContaQuitado(conta.id);
+    }
+  }
+
   // Período local (independente do período do extrato)
   const today = new Date();
   const [month, setMonth] = useState(today.getMonth());
@@ -160,10 +180,10 @@ export function ContasPage() {
   );
 
   // ── Contas do mês/ano selecionado ────────────────────────────────────────
-  const monthContas = useMemo(() => contas.filter((c) => {
+  const monthContas = useMemo(() => todasContas.filter((c) => {
     const d = parseDateLocal(c.vencimento);
     return d.getMonth() === month && d.getFullYear() === year;
-  }), [contas, month, year]);
+  }), [todasContas, month, year]);
 
   // ── Stats ─────────────────────────────────────────────────────────────────
   const aPagarAbertas   = monthContas.filter((c) => c.tipo === "pagar"   && c.status === "aberto");
@@ -183,7 +203,7 @@ export function ContasPage() {
   const saldoPrevisto   = totalReceberMes - totalPagarMes;
 
   const vencidasPagarCount   = contas.filter((c) => c.tipo === "pagar"   && c.status === "aberto" && c.vencimento < todayStr).length;
-  const vencidasReceberCount = contas.filter((c) => c.tipo === "receber" && c.status === "aberto" && c.vencimento < todayStr).length;
+  const vencidasReceberCount = todasContas.filter((c) => c.tipo === "receber" && c.status === "aberto" && c.vencimento < todayStr).length;
 
   // ── Categorias disponíveis no mês ────────────────────────────────────────
   const availableCategories = useMemo(() => {
@@ -267,8 +287,8 @@ export function ContasPage() {
 
     const consolidado = cfg.perfil === "todos";
     if (consolidado) {
-      const blocks: UserContasBlock[] = getAllUsersContas().map(({ name, contas: uc }) => {
-        const f = filterContasForReport(uc, cfg);
+      const blocks: UserContasBlock[] = getAllUsersContas().map(({ id, name, contas: uc }) => {
+        const f = filterContasForReport([...uc, ...contasReceberFranquias(id, contasDestino, franquias, lancamentosFranquia)], cfg);
         return {
           name,
           contasPagar:   f.filter((c) => c.tipo === "pagar").sort(sortVenc),
@@ -277,7 +297,7 @@ export function ContasPage() {
       });
       setConsolidadoBlocks(blocks);
     } else {
-      const f = filterContasForReport(contas, cfg);
+      const f = filterContasForReport(todasContas, cfg);
       setSinglePagar(f.filter((c) => c.tipo === "pagar").sort(sortVenc));
       setSingleReceber(f.filter((c) => c.tipo === "receber").sort(sortVenc));
     }
@@ -325,7 +345,7 @@ export function ContasPage() {
   }
 
   // ── Empty state ──────────────────────────────────────────────────────────
-  if (contas.length === 0) {
+  if (todasContas.length === 0 && lancamentosFranquia.length === 0) {
     return (
       <div>
         {/* Empty state */}
@@ -552,6 +572,31 @@ export function ContasPage() {
         </div>
       </div>
 
+      {/* ── Ligação com Franquias (só na aba A receber) ─────────────────── */}
+      {tipoFilter === "receber" && (
+        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-sky-500/15 bg-sky-500/[0.04] px-4 py-2.5">
+          <span className="text-xs font-semibold text-sky-300">Receber das Franquias:</span>
+          {([["royalties", "Royalties"], ["marketing", "Marketing"], ["avulso", "Avulsos"]] as const).map(([tipo, rotulo]) => (
+            <label key={tipo} className="flex items-center gap-1.5 text-xs text-slate-400">
+              {rotulo} →
+              <select
+                value={contasDestino[tipo] ?? ""}
+                onChange={(e) => setContasDestino({ [tipo]: e.target.value || undefined })}
+                className="rounded-md border border-white/[0.08] bg-slate-800 px-2 py-1 text-xs text-slate-200 outline-none focus:border-sky-400/40"
+              >
+                <option value="">— não lançar —</option>
+                {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </label>
+          ))}
+          <span className="text-[11px] text-slate-500">
+            {contasFranquia.length > 0
+              ? `${contasFranquia.length} conta${contasFranquia.length > 1 ? "s" : ""} das franquias neste usuário`
+              : "Nenhuma conta das franquias neste usuário"}
+          </span>
+        </div>
+      )}
+
       {/* ── Lista ──────────────────────────────────────────────────────── */}
       {listContas.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-center">
@@ -583,7 +628,7 @@ export function ContasPage() {
                 <div className="flex flex-1 items-center gap-4 px-4 py-3.5">
                   {/* Status icon */}
                   <button
-                    onClick={() => isQuitada ? toggleContaQuitado(conta.id) : setConfirmingQuit(conta)}
+                    onClick={() => isQuitada ? alternarQuitado(conta) : setConfirmingQuit(conta)}
                     title={isQuitada ? "Reabrir" : "Marcar como quitado"}
                     className="shrink-0 text-slate-500 transition hover:scale-110 hover:text-current"
                   >
@@ -608,6 +653,13 @@ export function ContasPage() {
                       {conta.category && (
                         <span className="shrink-0 rounded-md bg-white/[0.06] px-2 py-0.5 text-[10px] font-medium text-slate-400 ring-1 ring-white/[0.08]">
                           {conta.category}
+                        </span>
+                      )}
+                      {conta.origem === "franquia" && (
+                        <span
+                          title="Vem da aba Financeiro → Gestão Franquias. Para corrigir o valor, reimporte o relatório de vendas lá."
+                          className="shrink-0 rounded-md bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold text-sky-400 ring-1 ring-sky-500/20">
+                          Franquias
                         </span>
                       )}
                     </div>
@@ -641,29 +693,33 @@ export function ContasPage() {
 
                   {/* Actions — visíveis no hover */}
                   <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                    <button
-                      onClick={() => setEditingConta(conta)}
-                      title="Editar"
-                      className="rounded-lg p-1.5 text-slate-600 transition hover:bg-white/[0.06] hover:text-slate-300"
-                    >
-                      <Pencil size={13} />
-                    </button>
+                    {conta.origem !== "franquia" && (
+                      <button
+                        onClick={() => setEditingConta(conta)}
+                        title="Editar"
+                        className="rounded-lg p-1.5 text-slate-600 transition hover:bg-white/[0.06] hover:text-slate-300"
+                      >
+                        <Pencil size={13} />
+                      </button>
+                    )}
                     {isQuitada && (
                       <button
-                        onClick={() => toggleContaQuitado(conta.id)}
+                        onClick={() => alternarQuitado(conta)}
                         title="Reabrir"
                         className="rounded-lg p-1.5 text-slate-600 transition hover:bg-amber-500/10 hover:text-amber-400"
                       >
                         <RotateCcw size={13} />
                       </button>
                     )}
-                    <button
-                      onClick={() => deleteConta(conta.id)}
-                      title="Excluir"
-                      className="rounded-lg p-1.5 text-slate-600 transition hover:bg-red-500/10 hover:text-red-400"
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                    {conta.origem !== "franquia" && (
+                      <button
+                        onClick={() => deleteConta(conta.id)}
+                        title="Excluir"
+                        className="rounded-lg p-1.5 text-slate-600 transition hover:bg-red-500/10 hover:text-red-400"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -737,7 +793,7 @@ export function ContasPage() {
                 Cancelar
               </button>
               <button
-                onClick={() => { toggleContaQuitado(confirmingQuit.id); setConfirmingQuit(null); }}
+                onClick={() => { alternarQuitado(confirmingQuit); setConfirmingQuit(null); }}
                 className="flex-1 rounded-xl bg-gradient-to-b from-emerald-500 to-emerald-600 py-2.5 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(16,185,129,0.25),inset_0_1px_0_rgba(255,255,255,0.15)] transition hover:brightness-110 active:scale-[0.98]"
               >
                 {confirmingQuit.tipo === "pagar" ? "Quitar conta" : "Confirmar"}
